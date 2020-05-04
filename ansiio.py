@@ -10,25 +10,40 @@ ESCAPE_START = '['
 SUPPORT_CHARS = '=' + string.digits + ';'
 
 
-def parse_ansi(data:str) -> Tuple[str, List[int]]:
-    escape_type = ''
-    result = ['']
-    for char in data:
-        if char == '=':
-            escape_type += '='
-            continue
-        elif char == ';' or char in string.ascii_letters:
-            result[-1] = int(result[-1])
-            if char in string.ascii_letters:
-                escape_type += char
-                break
-            else: result.append('')
+class Escape:
+    def __init__(self, type, args):
+        self.type = type
+        self.args = args
+    @classmethod
+    def parse(cls, data:str):
+        escape_type = ''
+        result = ['']
+        for char in data:
+            if char == '=':
+                escape_type += '='
+                continue
+            elif char == ';' or char in string.ascii_letters:
+                result[-1] = int(result[-1])
+                if char in string.ascii_letters:
+                    escape_type += char
+                    break
+                else: result.append('')
+            else:
+                result[-1] += char
+        return cls(escape_type, result)
+    def __str__(self):
+        if len(self.type) >= 2:
+            pretype = self.type[0]
+            type = self.type[1]
         else:
-            result[-1] += char
-    return escape_type, result
+            pretype = ''
+            type = self.type
+        return ESCAPE_CHAR + ESCAPE_START + pretype + ';'.join(str(arg) for arg in self.args) + type
+    def __repr__(self):
+        return '%s(%r, %r)' % (self.__class__.__qualname__, self.type, self.args)
 
 
-def parse_string(data:str) -> List[Union[str, Tuple[str, List[int]]]]:
+def parse_string(data:str) -> List[Union[str, Escape]]:
     wait_for_start = False
     in_ansi = False
 
@@ -40,7 +55,7 @@ def parse_string(data:str) -> List[Union[str, Tuple[str, List[int]]]]:
             if char in SUPPORT_CHARS:
                 ansi_result += char
             elif char in string.ascii_letters:
-                result.append(parse_ansi(ansi_result + char))
+                result.append(Escape.parse(ansi_result + char))
                 result.append('')
                 in_ansi = False
             else:
@@ -58,6 +73,9 @@ def parse_string(data:str) -> List[Union[str, Tuple[str, List[int]]]]:
             else:
                 result += ESCAPE_CHAR
         if not (wait_for_start or in_ansi): result[-1] += char
+    
+    if result[0] == '': del result[0]
+    if result[-1] == '': del result[-1]
     return result
 
 
@@ -68,7 +86,7 @@ class AnsiStream(io.TextIOBase):
     def writable(self):
         return True
 
-    def use_ansi_escape(self, type:str, args:List[str]) -> None:
+    def use_ansi_escape(self, escape:Escape) -> None:
         pass
 
     def write(self, data:str, forget_result=False) -> Union[int, None]:
@@ -93,13 +111,22 @@ The length of the written string if `forget_result` is `False`, otherwise it ret
                 self.wrapped.write(value)
                 result += value
             else:
-                escape_type, escape_args = value
-                self.use_ansi_escape(escape_type, escape_args)
+                self.use_ansi_escape(value)
 
         return None if forget_result else len(result)
 
+    def flush(self):
+        return self.wrapped.flush()
+
     def readable(self):
         return False
+
+    def close(self):
+        return self.wrapped.close()
+
+    @property
+    def closed(self):
+        return self.wrapped.closed
 
 
 class StreamReplacer:
